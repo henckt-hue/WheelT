@@ -303,15 +303,16 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 /* TOAST */
 .toast{
-  position:fixed;top:calc(var(--header-h) + var(--safe-top) + 0.65rem);
+  position:fixed;top:calc(var(--header-h) + var(--safe-top) + 0.5rem);
   left:50%;transform:translateX(-50%) translateY(-130%);
   background:var(--surface2);border:1px solid var(--border);
-  border-radius:12px;padding:0.65rem 1.2rem;
-  font-size:0.8rem;font-weight:600;z-index:1000;
-  white-space:nowrap;transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
-  box-shadow:0 8px 30px rgba(0,0,0,0.5);max-width:90vw;white-space:normal;text-align:center;
+  border-radius:12px;padding:0.6rem 1.1rem;
+  font-size:0.78rem;font-weight:600;z-index:9999;
+  pointer-events:none;
+  transition:transform 0.25s ease, opacity 0.25s ease;opacity:0;
+  box-shadow:0 4px 20px rgba(0,0,0,0.5);max-width:90vw;white-space:normal;text-align:center;
 }
-.toast.show{transform:translateX(-50%) translateY(0);}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
 .toast.t-ok{border-color:var(--green);color:var(--green);}
 .toast.t-err{border-color:var(--red);color:var(--red);}
 .toast.t-info{border-color:var(--blue);color:var(--blue);}
@@ -1341,7 +1342,7 @@ async function saveTrade(){
   const expiry=document.getElementById('f-expiry').value;
   const strike=+document.getElementById('f-strike').value;
   const recv=+document.getElementById('f-recv').value;
-  if(!ticker||!expiry||!strike||!recv){showToast('Vul alle verplichte velden in','err');return;}
+  if(!ticker||!expiry||strike<=0||recv<=0){showToast('Vul alle verplichte velden in','err');return;}
   const contracts=+document.getElementById('f-contracts').value||1;
   const buy=+document.getElementById('f-buy').value||0;
   const fees=+document.getElementById('f-fees').value||0;
