@@ -303,16 +303,15 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 /* TOAST */
 .toast{
-  position:fixed;top:calc(var(--header-h) + var(--safe-top) + 0.5rem);
+  position:fixed;top:calc(var(--header-h) + var(--safe-top) + 0.65rem);
   left:50%;transform:translateX(-50%) translateY(-130%);
   background:var(--surface2);border:1px solid var(--border);
-  border-radius:12px;padding:0.6rem 1.1rem;
-  font-size:0.78rem;font-weight:600;z-index:9999;
-  pointer-events:none;
-  transition:transform 0.25s ease, opacity 0.25s ease;opacity:0;
-  box-shadow:0 4px 20px rgba(0,0,0,0.5);max-width:90vw;white-space:normal;text-align:center;
+  border-radius:12px;padding:0.65rem 1.2rem;
+  font-size:0.8rem;font-weight:600;z-index:1000;
+  white-space:nowrap;transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  box-shadow:0 8px 30px rgba(0,0,0,0.5);max-width:90vw;white-space:normal;text-align:center;
 }
-.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+.toast.show{transform:translateX(-50%) translateY(0);}
 .toast.t-ok{border-color:var(--green);color:var(--green);}
 .toast.t-err{border-color:var(--red);color:var(--red);}
 .toast.t-info{border-color:var(--blue);color:var(--blue);}
@@ -733,6 +732,17 @@ async function syncFromDropbox(saveAfter = false) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
     const imported = parseRows(rows);
 
+    // Read Overview sheet for correct KPI totals (B3=totalNet, B4=openPrem, B5=realizedPL, B6=capRisk)
+    const wsOV = wb.Sheets['Overview'];
+    if (wsOV) {
+      const ov = XLSX.utils.sheet_to_json(wsOV, { header: 1 });
+      const pn = v => typeof v === 'number' ? v : 0;
+      if (ov[2] && ov[2][1] !== undefined) overviewTotals.totalNet = pn(ov[2][1]);
+      if (ov[3] && ov[3][1] !== undefined) overviewTotals.openPrem = pn(ov[3][1]);
+      if (ov[4] && ov[4][1] !== undefined) overviewTotals.realizedPL = pn(ov[4][1]);
+      if (ov[5] && ov[5][1] !== undefined) overviewTotals.capRisk = pn(ov[5][1]);
+    }
+
     // Also read "Per Aandeel" sheet for ticker-level break-even
     const wsPA = wb.Sheets['Per Aandeel'];
     if (wsPA) {
@@ -862,6 +872,7 @@ async function pushToDropbox() {
 // DATA
 // ============================================================
 let trades = [];
+let overviewTotals = {};
 let perAandeel = {}; // Data from 'Per Aandeel' sheet
 let selectedYear = new Date().getFullYear();
 
@@ -1030,10 +1041,10 @@ function renderKPIs() {
   // Open Premium = SUM of gross received for OPEN trades only
   // Realized P/L = SUM of net premium (col N) for CLOSED trades
   // Capital at Risk = SUM of capital at risk (col T) for OPEN trades
-  const totalNet = trades.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
-  const openPrem = open.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
-  const realPL = closed.reduce((a,t)=>a+(t.netPremiumUSD!==undefined?t.netPremiumUSD:t.netPremium),0);
-  const capRisk = open.reduce((a,t)=>a+(t.capitalAtRiskUSD||t.capitalAtRisk||t.strike*t.contracts*100),0);
+  const totalNet = overviewTotals.totalNet !== undefined ? overviewTotals.totalNet : trades.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
+  const openPrem = overviewTotals.openPrem !== undefined ? overviewTotals.openPrem : open.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
+  const realPL = overviewTotals.realizedPL !== undefined ? overviewTotals.realizedPL : closed.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
+  const capRisk = overviewTotals.capRisk !== undefined ? overviewTotals.capRisk : open.reduce((a,t)=>a+(t.capitalAtRiskUSD||t.capitalAtRisk||t.strike*t.contracts*100),0);
   const wins=closed.filter(t=>t.netPremium>0).length;
   const wr=closed.length?wins/closed.length*100:0;
   document.getElementById('kpi-scroll').innerHTML = [
@@ -1342,7 +1353,7 @@ async function saveTrade(){
   const expiry=document.getElementById('f-expiry').value;
   const strike=+document.getElementById('f-strike').value;
   const recv=+document.getElementById('f-recv').value;
-  if(!ticker||!expiry||strike<=0||recv<=0){showToast('Vul alle verplichte velden in','err');return;}
+  if(!ticker||!expiry||!strike||!recv){showToast('Vul alle verplichte velden in','err');return;}
   const contracts=+document.getElementById('f-contracts').value||1;
   const buy=+document.getElementById('f-buy').value||0;
   const fees=+document.getElementById('f-fees').value||0;
