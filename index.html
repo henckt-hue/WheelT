@@ -700,7 +700,6 @@ async function syncFromDropbox(saveAfter = false) {
   setSyncUI('syncing');
   isSyncing = true;
   try {
-    // List app folder root to auto-detect the Excel file
     const listResp = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + cfg.token, 'Content-Type': 'application/json' },
@@ -725,61 +724,82 @@ async function syncFromDropbox(saveAfter = false) {
       headers: { 'Authorization': 'Bearer ' + cfg.token, 'Dropbox-API-Arg': JSON.stringify({ path: actualPath }) }
     });
     if (!resp.ok) throw new Error('Download mislukt HTTP ' + resp.status);
-        const buf = await resp.arrayBuffer();
+    const buf = await resp.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+
+    // --- Trades sheet ---
     const ws = wb.Sheets['Trades'];
     if (!ws) throw new Error('Sheet "Trades" niet gevonden in Excel');
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
     const imported = parseRows(rows);
 
-    // Read Overview sheet for correct KPI totals
+    // --- Overview sheet ---
     overviewTotals = {};
     const wsOV = wb.Sheets['Overview'];
     if (wsOV) {
       const ov = XLSX.utils.sheet_to_json(wsOV, { header: 1 });
       const pn = v => typeof v === 'number' ? v : 0;
-      if (ov[2] && ov[2][1] !== undefined) overviewTotals.totalNet = pn(ov[2][1]);
-      if (ov[3] && ov[3][1] !== undefined) overviewTotals.openPrem = pn(ov[3][1]);
+      if (ov[2] && ov[2][1] !== undefined) overviewTotals.totalNet   = pn(ov[2][1]);
+      if (ov[3] && ov[3][1] !== undefined) overviewTotals.openPrem   = pn(ov[3][1]);
       if (ov[4] && ov[4][1] !== undefined) overviewTotals.realizedPL = pn(ov[4][1]);
-      if (ov[5] && ov[5][1] !== undefined) overviewTotals.capRisk = pn(ov[5][1]);
+      if (ov[5] && ov[5][1] !== undefined) overviewTotals.capRisk    = pn(ov[5][1]);
     }
 
-    // Also read "Per Aandeel" sheet for ticker-level break-even
-    const wsPA = wb.Sheets['Per Aandeel'];
-    if (wsPA) {
-      const paRows = XLSX.utils.sheet_to_json(wsPA, { header: 1 });
-      // Col A=0:Ticker, H=7:Break-even aandelen, G=6:Aandelen in portefeuille
-      // D=3:Open Capital, J=9:Dagen tot expiry, I=8:Volgende expiry
-      perAandeel = {};
-      for (let pi = 3; pi < paRows.length; pi++) {
-        const pr = paRows[pi];
-        if (!pr[0] || String(pr[0]).trim() === '') continue;
-        const ticker = String(pr[0]).toUpperCase().trim();
-        const parseNum = v => {
-          if (!v && v !== 0) return 0;
-          if (typeof v === 'number') return v;
-          let s = String(v).trim();
-          const neg = s.startsWith('(') && s.endsWith(')');
-          s = s.replace(/[^0-9,.\-]/g,'').replace(',','.');
-          const n = parseFloat(s)||0;
-          return neg ? -n : n;
-        };
-        perAandeel[ticker] = {
-          breakeven: parseNum(pr[7]),        // H: Break-even aandelen
-          shares: parseNum(pr[6]),           // G: Aandelen in portefeuille
-          openCapital: parseNum(pr[3]),      // D: Open Capital
-          openTrades: parseNum(pr[4]),       // E: Open Trades
-          nextExpiry: pr[8]||'',             // I: Volgende expiry
-          daysToExpiry: parseNum(pr[9]),     // J: Dagen tot expiry
-          status: String(pr[10]||'').trim(), // K: Status waarschuwing
-        };
-      }
-    }
-    if (imported.length > 0) {
-      trades = imported;
-      saveLocal();
-      renderAll();
-    }
+    // ----------------------------------------------------------------
+    // FIX: Read per-ticker tabs (ASTS, RKLB, …) for shares (B7) and
+    //      break-even (B8).  The "Aandeel" tab is a summary; each
+    //      ticker has its own vertical sheet where:
+    //        B3  = ticker name
+    //        B7  = Aandelen in portefeuille
+    //        B8  = Break-even aandelen
+    // ----------------------------------------------------------------
+    perAandeel = {};
+
+    // Helper: get numeric value from a cell
+    const cellNum = (ws, addr) => {
+      const cell = ws[addr];
+      if (!cell) return 0;
+      if (typeof cell.v === 'number') return cell.v;
+      const s = String(cell.v || '').replace(/[^0-9.\-]/g, '');
+      return parseFloat(s) || 0;
+    };
+
+    // Identify all ticker sheets — skip known non-ticker sheets
+    const NON_TICKER_SHEETS = new Set([
+      'trades', 'overview', 'per aandeel', 'aandeel', 'instellingen',
+      'settings', 'dashboard', 'data', 'screener'
+    ]);
+
+    wb.SheetNames.forEach(sheetName => {
+      if (NON_TICKER_SHEETS.has(sheetName.toLowerCase())) return;
+
+      const ws = wb.Sheets[sheetName];
+      if (!ws) return;
+
+      // B3 should contain the ticker name (as a cross-check)
+      // B7 = Aandelen in portefeuille
+      // B8 = Break-even aandelen
+      const sharesCell   = ws['B7'];
+      const breakevenCell = ws['B8'];
+
+      // Only process if at least one of the relevant cells exists
+      if (!sharesCell && !breakevenCell) return;
+
+      const shares   = cellNum(ws, 'B7');
+      const breakeven = cellNum(ws, 'B8');
+
+      // Use the sheet name as the ticker key (uppercased)
+      const ticker = sheetName.toUpperCase().trim();
+      perAandeel[ticker] = {
+        shares,
+        breakeven,
+        // Keep these for potential future use
+        openCapital: cellNum(ws, 'B9'),
+        nextExpiry: ws['B10'] ? ws['B10'].v : '',
+        daysToExpiry: 0,
+      };
+    });
+
     // Always overwrite local with Dropbox data
     trades = imported;
     saveLocal();
@@ -807,7 +827,6 @@ async function pushToDropbox() {
   if (!isConnected || !cfg.token) return;
   setSyncUI('syncing');
   try {
-    // Download current file to preserve all sheets/formulas
     const filePath = cfg.path.startsWith('/') ? cfg.path : '/' + cfg.path;
     const dlResp = await fetch(`${DBX_CONTENT}/files/download`, {
       method: 'POST',
@@ -822,11 +841,9 @@ async function pushToDropbox() {
       const buf = await dlResp.arrayBuffer();
       wb = XLSX.read(buf, { type: 'array', cellDates: true });
     } else {
-      // File doesn't exist yet — create fresh
       wb = XLSX.utils.book_new();
     }
 
-    // Rebuild Trades sheet with current data
     const headers = ['Open','Close','Ticker','Type','Expiry','Days to Expiry','Strike','Contracts',
       'Premium Received / share','Premium Paid (Buyback) / share','Total Premium Received',
       'Total Premium Paid','Fees','Net Premium','Account','Breakeven','Status',
@@ -874,7 +891,7 @@ async function pushToDropbox() {
 // ============================================================
 let trades = [];
 let overviewTotals = {};
-let perAandeel = {}; // Data from 'Per Aandeel' sheet
+let perAandeel = {};
 let selectedYear = new Date().getFullYear();
 
 function changeYear(dir) {
@@ -891,7 +908,6 @@ function parseRows(rows) {
     const r = rows[i];
     if (!r[2] || String(r[2]).trim() === '') continue;
 
-    // Date fix: use local time to avoid UTC -1 day bug
     const fd = v => {
       if (!v) return '';
       if (v instanceof Date) {
@@ -904,7 +920,6 @@ function parseRows(rows) {
       return '';
     };
 
-    // Parse number: strip currency symbols, handle (x) = negative
     const parseNum = v => {
       if (v === null || v === undefined || v === '') return 0;
       if (typeof v === 'number') return v;
@@ -915,32 +930,20 @@ function parseRows(rows) {
       return neg ? -n : n;
     };
 
-    // Column mapping (0-indexed):
-    // A=0:Open  B=1:Close  C=2:Ticker  D=3:Type  E=4:Expiry  F=5:DTE
-    // G=6:Strike  H=7:Contracts  I=8:PremRecv/sh  J=9:PremBuy/sh
-    // K=10:TotPremRecv  L=11:TotPremPaid  M=12:Fees  N=13:NetPremium
-    // O=14:Account  P=15:Breakeven  Q=16:Status  R=17:AssignedShares
-    // S=18:ShareCostBasis  T=19:CapitalAtRisk  U=20:Yield  V=21:AnnYield
-    // W=22:RealizedPL  X=23:Notes  ...  AA=26:Currency
-
-    // Find currency column - search last columns
     let cur = 'USD';
     for (let ci = Math.min(r.length-1, 32); ci >= 20; ci--) {
       const v = String(r[ci]||'').trim().toUpperCase();
       if (v === 'USD' || v === 'EUR') { cur = v; break; }
     }
 
-    const FX_EUR_USD = 1.15; // fallback rate
+    const FX_EUR_USD = 1.15;
     const fxRate = cur === 'EUR' ? FX_EUR_USD : 1;
-
     const rawNet = parseNum(r[13]);
     const netUSD = cur === 'EUR' ? rawNet * fxRate : rawNet;
-
     const rawStrike = parseNum(r[6]);
     const rawContracts = parseNum(r[7]) || 1;
     const rawCapital = parseNum(r[19]) || (rawStrike * rawContracts * 100);
     const capUSD = cur === 'EUR' ? rawCapital * fxRate : rawCapital;
-
     const rawBreakeven = parseNum(r[15]);
     const status = String(r[16]||'Open').trim();
 
@@ -966,7 +969,6 @@ function parseRows(rows) {
   }
   return out;
 }
-
 
 function seedData() {
   trades = [
@@ -1037,13 +1039,8 @@ function renderAll() {
 
 function renderKPIs() {
   const open=openT(), closed=closedT();
-  // Match Excel Overview calculations:
-  // Total Net Premium = SUM of gross received (col K) for ALL trades
-  // Open Premium = SUM of gross received for OPEN trades only
-  // Realized P/L = SUM of net premium (col N) for CLOSED trades
-  // Capital at Risk = SUM of capital at risk (col T) for OPEN trades
-  const totalNet = overviewTotals.totalNet !== undefined ? overviewTotals.totalNet : trades.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
-  const openPrem = overviewTotals.openPrem !== undefined ? overviewTotals.openPrem : open.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
+  const totalNet = overviewTotals.totalNet !== undefined ? overviewTotals.totalNet : trades.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
+  const openPrem = overviewTotals.openPrem !== undefined ? overviewTotals.openPrem : open.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
   const realPL = closed.reduce((a,t)=>a+(t.netPremiumUSD!==undefined?t.netPremiumUSD:t.netPremium),0);
   const capRisk = open.reduce((a,t)=>a+(t.capitalAtRiskUSD||t.capitalAtRisk||t.strike*t.contracts*100),0);
   const wins=closed.filter(t=>t.netPremium>0).length;
@@ -1154,12 +1151,10 @@ function setFilter(val,btn) {
 }
 
 function showTickerDetail(ticker) {
-  filterVal = ticker;
   showPage('trades', document.querySelectorAll('.nav-item')[1]);
   document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
   document.querySelectorAll('.chip')[0].classList.add('active');
   filterVal = '';
-  // Custom filter by ticker
   renderTradeCardsByTicker(ticker);
 }
 
@@ -1185,15 +1180,16 @@ function renderTickerGrid() {
       by[t.ticker].real+=t.netPremium;
     }
   });
-  // Override with Per Aandeel data where available
+
+  // Override with per-ticker tab data (shares B7, breakeven B8)
   Object.keys(by).forEach(ticker => {
     const pa = perAandeel[ticker];
     if (pa) {
-      by[ticker].breakeven = pa.breakeven || 0;
-      by[ticker].shares = pa.shares || 0;
-      if (pa.daysToExpiry > 0) by[ticker].minDTE = pa.daysToExpiry;
+      if (pa.shares > 0)    by[ticker].shares    = pa.shares;
+      if (pa.breakeven > 0) by[ticker].breakeven = pa.breakeven;
     }
   });
+
   document.getElementById('ticker-grid').innerHTML=Object.entries(by).map(([k,d])=>{
     const cur = d.currency||'USD';
     const dteTxt = d.minDTE!==null ? (d.minDTE<=7?`<span class="dte dte-urgent">${d.minDTE}d</span>`:d.minDTE<=21?`<span class="dte dte-soon">${d.minDTE}d</span>`:`<span class="dte dte-ok">${d.minDTE}d</span>`) : '—';
@@ -1252,7 +1248,6 @@ function renderPerf() {
     </div>`;
   }).join('');
 }
-
 
 function renderScreener() {
   const c=[
@@ -1392,17 +1387,6 @@ function delTrade(idx){
 // ============================================================
 // UI
 // ============================================================
-function setKpiFilter(status) {
-  showPage('trades', document.querySelectorAll('.nav-item')[1]);
-  filterVal = status;
-  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
-  const chipMap = {'':'Alle','Open':'Open','Closed':'Closed','Assigned':'Assigned'};
-  document.querySelectorAll('.chip').forEach(c=>{
-    if(c.textContent.trim()===chipMap[status]) c.classList.add('active');
-  });
-  renderTradeCards();
-}
-
 function showPage(id,btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
