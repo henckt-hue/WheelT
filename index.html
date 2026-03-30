@@ -307,11 +307,11 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   left:50%;transform:translateX(-50%) translateY(-130%);
   background:var(--surface2);border:1px solid var(--border);
   border-radius:12px;padding:0.65rem 1.2rem;
-  font-size:0.8rem;font-weight:600;z-index:1000;
-  white-space:nowrap;transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  font-size:0.8rem;font-weight:600;z-index:1000;pointer-events:none;opacity:0;
+  white-space:nowrap;transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1),opacity 0.3s;
   box-shadow:0 8px 30px rgba(0,0,0,0.5);max-width:90vw;white-space:normal;text-align:center;
 }
-.toast.show{transform:translateX(-50%) translateY(0);}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
 .toast.t-ok{border-color:var(--green);color:var(--green);}
 .toast.t-err{border-color:var(--red);color:var(--red);}
 .toast.t-info{border-color:var(--blue);color:var(--blue);}
@@ -1042,10 +1042,10 @@ function renderKPIs() {
   // Open Premium = SUM of gross received for OPEN trades only
   // Realized P/L = SUM of net premium (col N) for CLOSED trades
   // Capital at Risk = SUM of capital at risk (col T) for OPEN trades
-  const totalNet = overviewTotals.totalNet !== undefined ? overviewTotals.totalNet : trades.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
-  const openPrem = overviewTotals.openPrem !== undefined ? overviewTotals.openPrem : open.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
-  const realPL = overviewTotals.realizedPL !== undefined ? overviewTotals.realizedPL : closed.reduce((a,t)=>a+(t.netPremiumUSD||t.netPremium),0);
-  const capRisk = overviewTotals.capRisk !== undefined ? overviewTotals.capRisk : open.reduce((a,t)=>a+(t.capitalAtRiskUSD||t.capitalAtRisk||t.strike*t.contracts*100),0);
+  const totalNet = overviewTotals.totalNet !== undefined ? overviewTotals.totalNet : trades.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
+  const openPrem = overviewTotals.openPrem !== undefined ? overviewTotals.openPrem : open.reduce((a,t)=>a+(t.grossPremiumUSD||t.grossPremium||t.netPremiumUSD||t.netPremium),0);
+  const realPL = closed.reduce((a,t)=>a+(t.netPremiumUSD!==undefined?t.netPremiumUSD:t.netPremium),0);
+  const capRisk = open.reduce((a,t)=>a+(t.capitalAtRiskUSD||t.capitalAtRisk||t.strike*t.contracts*100),0);
   const wins=closed.filter(t=>t.netPremium>0).length;
   const wr=closed.length?wins/closed.length*100:0;
   document.getElementById('kpi-scroll').innerHTML = [
