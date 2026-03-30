@@ -732,7 +732,8 @@ async function syncFromDropbox(saveAfter = false) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
     const imported = parseRows(rows);
 
-    // Read Overview sheet for correct KPI totals (B3=totalNet, B4=openPrem, B5=realizedPL, B6=capRisk)
+    // Read Overview sheet for correct KPI totals
+    overviewTotals = {};
     const wsOV = wb.Sheets['Overview'];
     if (wsOV) {
       const ov = XLSX.utils.sheet_to_json(wsOV, { header: 1 });
